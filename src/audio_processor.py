@@ -4,7 +4,7 @@ from src.stt import STT
 from src.tts import TTS
 import asyncio
 
-SPEECH_TIMEOUT = 1.8
+SPEECH_TIMEOUT = 1.5
 VAD_THRESHOLD = 0.2
 
 class AudioProcessor:
