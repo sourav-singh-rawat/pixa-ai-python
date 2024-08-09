@@ -1,0 +1,7 @@
+deepgram_sdk==3.4.0
+fireworks_ai==0.14.0
+groq==0.9.0
+openai==1.40.0
+pysilero_vad==1.0.0
+python-dotenv==1.0.1
+websockets==12.0

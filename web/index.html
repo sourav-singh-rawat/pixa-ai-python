@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pixa Audio</title>
+    <style>
+      :root {
+        --primary-color: #4a90e2;
+        --primary-color-dark: #3a7bc8;
+        --secondary-color: #f5f5f5;
+        --text-color: #333;
+        --error-color: #e74c3c;
+        --disabled-color: #cccccc;
+        --disabled-text-color: #666666;
+        --stop-color: #e74c3c;
+        --stop-color-dark: #c0392b;
+      }
+
+      body {
+        font-family: Arial, sans-serif;
+        margin: 0;
+        height: 100vh;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        flex-direction: column;
+        background-color: var(--secondary-color);
+        color: var(--text-color);
+      }
+
+      #btn-container {
+        margin-top: 20px;
+      }
+
+      #btn-recording {
+        padding: 10px 20px;
+        font-size: 16px;
+        background-color: var(--primary-color);
+        color: white;
+        border: none;
+        border-radius: 5px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+      }
+
+      #btn-recording:hover:not(:disabled) {
+        background-color: var(--primary-color-dark);
+      }
+
+      #btn-recording:disabled {
+        background-color: var(--disabled-color);
+        color: var(--disabled-text-color);
+        cursor: not-allowed;
+        opacity: 0.7;
+      }
+
+      #btn-recording.stop {
+        background-color: var(--stop-color);
+      }
+
+      #btn-recording.stop:hover:not(:disabled) {
+        background-color: var(--stop-color-dark);
+      }
+
+      #audioPlayer {
+        margin-top: 20px;
+        width: 300px;
+      }
+
+      #error-message {
+        position: fixed;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        color: var(--error-color);
+        background-color: rgba(231, 76, 60, 0.1);
+        padding: 10px;
+        border-radius: 5px;
+        display: none;
+      }
+
+      #connetion-status {
+        top: 20px;
+        color: var(--text-color);
+        font-size: 12px;
+      }
+    </style>
+    <script src="https://cdn.webrtc-experiment.com/RecordRTC.js"></script>
+  </head>
+  <body>
+    <h1>Pixa Audio</h1>
+    <div id="btn-container">
+      <button id="btn-recording">Start Recording</button>
+    </div>
+
+    <audio id="audioPlayer" controls hidden>
+      <source id="audioSource" src="" type="audio/aac" />
+      Your browser does not support the audio element.
+    </audio>
+    <p id="connetion-status">Connecting websocket...</p>
+    <div id="error-message"></div>
+
+    <script type="text/javascript">
+      console.log("Hello world!, I am main.js");
+
+      const btnRecording = document.getElementById("btn-recording");
+      const connetionStatus = document.getElementById("connetion-status");
+      const errorElement = document.querySelector("#error-message");
+
+      var webSocket, remote, stream;
+      var recorder;
+
+      const init = async () => {
+        console.log("[init]:");
+
+        btnRecording.disabled = true;
+
+        setupWebsocket();
+
+        btnRecording.addEventListener("click", onPressedRecording);
+
+        window.addEventListener("error", (event) => {
+          if (event.message.includes("message port closed")) {
+            alert("Message port closed before a response was received.");
+            // Handle the error condition appropriately
+          }
+        });
+      };
+
+      window.onload = init;
+
+      const setupWebsocket = () => {
+        console.log("[setupWebsocket]");
+
+        // let loc = window.location;
+        // let wsStart = "ws://";
+        // const port = 8765;
+
+        // if (loc.protocol == "https:") {
+        //   wsStart == "wss://";
+        // }
+
+        // var endPoint = wsStart + loc.host + loc.pathname + ":" + port;
+
+        var endPoint = "ws://localhost:8765";
+
+        console.log(`[setupWebsocket]: ${endPoint}`);
+
+        webSocket = new WebSocket(endPoint);
+
+        webSocket.addEventListener("open", async (e) => {
+          console.log(
+            "[setupWebsocket]:[webSocket:addEventListener:open] Connection opened!"
+          );
+          btnRecording.disabled = false;
+
+          connetionStatus.style.display = "none";
+
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: true,
+          });
+        });
+
+        webSocket.addEventListener("close", (e) => {
+          console.log(
+            "[setupWebsocket]:[webSocket:addEventListener:close] Connection closed!"
+          );
+          btnRecording.disabled = true;
+
+          connetionStatus.innerHTML = "none";
+
+          onCatch("Websocket connection unexpectedly close, Try Refresh!");
+        });
+
+        webSocket.addEventListener("error", (e) => {
+          console.log(
+            `[setupWebsocket]:[webSocket:addEventListener:error] Error: ${e}`
+          );
+          btnRecording.disabled = true;
+
+          connetionStatus.style.display = "none";
+
+          onCatch(e);
+        });
+
+        webSocket.addEventListener("message", onWebsocketMessage);
+      };
+
+      const audioContext = new (window.AudioContext ||
+        window.webkitAudioContext)();
+      let bufferSource = null;
+      let sampleRate = 24000; // Adjust the sample rate based on your PCM format
+      let bufferSize = 2048; // Adjust the buffer size based on your needs
+      let numberOfChannels = 1;
+
+      let audioResponseChunks = [];
+      let isConsumingAudioResponse = true;
+
+      // ############### Chunks buffer audio play ###################
+
+      let audioBuffer = null;
+      let currentWritePosition = 0;
+
+      // ############### Complete audio play ###################
+
+      const onWebsocketMessage = async (message) => {
+        console.log(message);
+        let payload = message.data;
+        try {
+          if (payload === "stop-consuming") {
+            isConsumingAudioResponse = false;
+            playAudio();
+            return;
+          }
+
+          if (payload == "start-generative-response") {
+            await stopRecording();
+
+            sampleRate = 24000;
+            audioResponseChunks = [];
+            isConsumingAudioResponse = true;
+            console.log(
+              "[onWebsocketMessage]: Start listing generative audio response"
+            );
+            return;
+          }
+          if (payload == "start-data-response") {
+            await stopRecording();
+
+            sampleRate = 88200;
+            audioResponseChunks = [];
+            isConsumingAudioResponse = true;
+            console.log(
+              "[onWebsocketMessage]: Start listing data audio response"
+            );
+            return;
+          }
+
+          if (isConsumingAudioResponse) {
+            const blob = payload;
+            const arrayBuffer = await new Response(blob).arrayBuffer();
+            const pcmData = new Int16Array(arrayBuffer);
+            audioResponseChunks.push(pcmData);
+          }
+        } catch (e) {
+          onCatch(e);
+        }
+      };
+
+      const playAudio = () => {
+        if (bufferSource) {
+          stopCurrentAudio();
+        }
+
+        const totalLength = audioResponseChunks.reduce(
+          (length, chunk) => length + chunk.length,
+          0
+        );
+
+        if (totalLength === 0) {
+          console.warn("No audio data to play.");
+          return;
+        }
+
+        const audioBuffer = audioContext.createBuffer(
+          numberOfChannels,
+          totalLength,
+          sampleRate
+        );
+        let offset = 0;
+
+        for (const chunk of audioResponseChunks) {
+          const floatData = new Float32Array(chunk.length);
+          for (let i = 0; i < chunk.length; i++) {
+            floatData[i] = chunk[i] / 32768; // Convert 16-bit signed integer to float
+          }
+          audioBuffer.copyToChannel(floatData, 0, offset);
+          offset += chunk.length;
+        }
+
+        bufferSource = audioContext.createBufferSource();
+        bufferSource.buffer = audioBuffer;
+        bufferSource.connect(audioContext.destination);
+        bufferSource.start();
+      };
+
+      const stopCurrentAudio = async () => {
+        if (bufferSource) {
+          bufferSource.stop();
+          bufferSource = null;
+        }
+      };
+
+      const sendMessageToWebsocket = (payload) => {
+        webSocket.send(payload);
+      };
+
+      const onPressedRecording = async () => {
+        try {
+          if (btnRecording.innerHTML == "Start Recording") {
+            await stopCurrentAudio();
+
+            console.log("[onPressedRecording]: Start Recording");
+
+            btnRecording.disabled = true;
+
+            recorder = new RecordRTC(stream, {
+              type: "audio",
+              mimeType: "audio/webm",
+              sampleRate: 44100,
+              numberOfAudioChannels: 1,
+              desiredSampRate: 16000,
+              recorderType: StereoAudioRecorder,
+              timeSlice: 500,
+              ondataavailable: (blob) => {
+                console.log(
+                  `[onPressedRecording]:[ondataavailable]: Audio Recorded 500ms chunk: ${blob}`
+                );
+
+                sendMessageToWebsocket(blob);
+              },
+            });
+
+            await recorder.startRecording();
+
+            btnRecording.innerHTML = "Stop Recording";
+            btnRecording.classList.add("stop");
+            btnRecording.disabled = false;
+          } else if (btnRecording.innerHTML == "Stop Recording") {
+            await stopRecording();
+            sendMessageToWebsocket("stop-consuming");
+          }
+        } catch (e) {
+          onCatch(e);
+        }
+      };
+
+      const stopRecording = async () => {
+        console.log("[onPressedRecording]: Stop Recording");
+
+        btnRecording.disabled = true;
+        btnRecording.innerHTML = "Start Recording";
+        btnRecording.classList.remove("stop");
+
+        await recorder.stopRecording();
+
+        btnRecording.disabled = false;
+      };
+
+      const onCatch = (error) => {
+        errorElement.innerHTML = error;
+        errorElement.style.display = "block";
+
+        console.log(`[onCatch]: ${error}`);
+      };
+
+      const disconnect = () => {};
+    </script>
+  </body>
+</html>
