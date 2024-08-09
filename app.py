@@ -4,8 +4,8 @@ from src.websocket_server import WebSocketServer
 def main():
     try:
         load_dotenv()
-        # host = "0.0.0.0"
-        host = "localhost"
+        host = "0.0.0.0"
+        # host = "localhost"
         server = WebSocketServer(host, 8765)
         server.run()
     except Exception as e:
