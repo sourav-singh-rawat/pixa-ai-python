@@ -38,13 +38,11 @@ class WebSocketServer:
     async def handle_audio_chunk(self, websocket, chunk):
         is_speech = await self.processor.is_speech(chunk)
         
-        # if is_speech:
-        #     await self.handle_speech(chunk)
-        # else:
-        #     await self.handle_silence(websocket)
-            
-        await self.handle_speech(chunk)
-            
+        if is_speech:
+            await self.handle_speech(chunk)
+        else:
+            await self.handle_silence(websocket)
+                        
     async def handle_speech(self,chunk):
         print("[WebSocketServer]:[handle_speech]: Speech detected")
         await self.processor.process_chunk(chunk)
